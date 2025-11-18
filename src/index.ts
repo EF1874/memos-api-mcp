@@ -19,7 +19,9 @@ function generateChatTime(): string {
 
 const MEMOS_BASE_URL = process.env.MEMOS_BASE_URL || "https://memos.memtensor.cn/api/openmem/v1";
 const MEMOS_USER_ID = process.env.MEMOS_USER_ID ?? "<unset>";
+const MEMOS_CHANNEL_ID = process.env.MEMOS_CHANNEL?.toUpperCase() ?? "MEMOS";
 const USER_LITERAL = JSON.stringify(MEMOS_USER_ID);
+const candidateChannelId: string[] = ["MODELSCOPE", "MCPSO", "MCPMARKETCN", "MCPMARKETCOM", "MEMOS"];
 
 const server = new McpServer(
   {
@@ -159,8 +161,14 @@ server.tool(
       if (!process.env.MEMOS_USER_ID) {
         throw new Error("MEMOS_USER_ID is not set, please set it in the environment variables or mcp.json file");
       }
+
+      if (!candidateChannelId.includes(MEMOS_CHANNEL_ID)) {
+        throw new Error("Unknown channel: " + MEMOS_CHANNEL_ID);
+      }
+
       // If no conversation_id provided, fall back to environment variable
       const actualConversationId = stringToMd5(process.env.MEMOS_USER_ID + '\n' + conversation_first_message) || process.env.MEMOS_CONVERSATION_ID;
+      const actualUserId = MEMOS_CHANNEL_ID === "MEMOS" ? process.env.MEMOS_USER_ID : process.env.MEMOS_USER_ID + "-" + MEMOS_CHANNEL_ID;
 
       const newMessages = messages.map(message => ({
         role: message.role,
@@ -170,7 +178,11 @@ server.tool(
 
       const data = await queryMemos(
         "/add/message",
-        { user_id: process.env.MEMOS_USER_ID, conversation_id: actualConversationId, messages: newMessages },
+        { 
+          user_id: actualUserId, 
+          conversation_id: actualConversationId, 
+          messages: newMessages 
+        },
         process.env.MEMOS_API_KEY
       );
 
@@ -223,13 +235,18 @@ server.tool(
         throw new Error("MEMOS_USER_ID is not set, please set it in the environment variables or mcp.json file");
       }
 
+      if (!candidateChannelId.includes(MEMOS_CHANNEL_ID)) {
+        throw new Error("Unknown channel: " + MEMOS_CHANNEL_ID);
+      }
+
       const actualConversationId = stringToMd5(process.env.MEMOS_USER_ID + '\n' + conversation_first_message) || process.env.MEMOS_CONVERSATION_ID;
+      const actualUserId = MEMOS_CHANNEL_ID === "MEMOS" ? process.env.MEMOS_USER_ID : process.env.MEMOS_USER_ID + "-" + MEMOS_CHANNEL_ID;
 
       const data = await queryMemos(
         "/search/memory",
         {
           query,
-          user_id: process.env.MEMOS_USER_ID,
+          user_id: actualUserId,
           conversation_id: actualConversationId,
           memory_limit_number: memory_limit_number || 6
         },
@@ -269,11 +286,20 @@ server.tool(
       if (!process.env.MEMOS_USER_ID) {
         throw new Error("MEMOS_USER_ID is not set, please set it in the environment variables or mcp.json file");
       }
+
+      if (!candidateChannelId.includes(MEMOS_CHANNEL_ID)) {
+        throw new Error("Unknown channel: " + MEMOS_CHANNEL_ID);
+      }
+
       const actualConversationId = stringToMd5(process.env.MEMOS_USER_ID + '\n' + conversation_first_message) || process.env.MEMOS_CONVERSATION_ID;
+      const actualUserId = MEMOS_CHANNEL_ID === "MEMOS" ? process.env.MEMOS_USER_ID : process.env.MEMOS_USER_ID + "-" + MEMOS_CHANNEL_ID;
 
       const data = await queryMemos(
         "/get/message",
-        { user_id: process.env.MEMOS_USER_ID, conversation_id: actualConversationId },
+        { 
+          user_id: actualUserId, 
+          conversation_id: actualConversationId 
+        },
         process.env.MEMOS_API_KEY
       );
 

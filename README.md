@@ -1,10 +1,10 @@
-# @memtensor/memos-api-mcp
+# MCP Server for MemOS API
 
-A Model Context Protocol (MCP) implementation for the Memos API service. This package provides a command-line interface to interact with Memos API using MCP standards.
+A Model Context Protocol (MCP) implementation for the [MemOS](https://github.com/MemTensor/MemOS) API service. This package provides a command-line interface to interact with MemOS API using MCP standards.
 
 ## MCP Configuration
 
-To use this package In IDE
+To use this package In MCP Client, use the following configuration:
 
 ```json
 {
