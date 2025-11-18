@@ -141,15 +141,6 @@ memos-mcp/
 - `zod`: ^3.23.8
 - `ts-md5`: ^2.0.0
 
-
-## License
-
-[License Type] - See LICENSE file for details
-
-## Contributing
-
-Contributions are welcome! Please feel free to submit a Pull Request.
-
 ## Version
 
 Current version: 1.0.0-beta.2
