@@ -203,10 +203,9 @@ server.tool(
   "search_memory",
   `
   Trigger: MUST be auto-invoked by the client before generating every answer (including greetings like "hello"). Do not wait for the user to request memory/MCP/tool usage.
-  Purpose: MemOS retrieval API. Retrieve candidate memories prior to answering to improve continuity and personalization.
+  Purpose: MemOS retrieval API. Retrieve candidate memories reflecting the user's action, context, intention and preferences, to improve continuity and personalization of your answers.
   Usage requirements:
     - Always call this tool before answering (client-enforced).
-    - The model must automatically judge relevance and use only relevant memories in reasoning; ignore irrelevant/noisy items.
   Parameters:
     - \`query\`: User's current question/message
     - \`conversation_first_message\`: First user message in the thread (used to generate conversation_id)
@@ -215,6 +214,7 @@ server.tool(
     - Run before answering. Results may include noise; filter and use only what is relevant.
     - \`query\` should be a concise summary of the current user message.
     - Prefer recent and important memories. If none are relevant, proceed to answer normally.
+    - The model must automatically judge relevance and use only relevant memories in reasoning; ignore irrelevant/noisy items, and some out-dated memories when answering those questions that require recent information.
   `,
   {
     query: z.string().describe("Search query to find relevant content in conversation history"),
