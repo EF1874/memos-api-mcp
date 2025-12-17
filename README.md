@@ -36,22 +36,36 @@ This package provides the following MCP tools:
 1. `add_message`
    - Adds a new message to a conversation
    - Parameters:
-     - `conversation_id`: Conversation ID to identify which conversation the message belongs to
-     - `messages`: Array of messages containing role and content information
-       - `role`: Role of the message sender, e.g., user, assistant
-       - `content`: Message content
+     - `conversation_first_message`: The first message sent by the user in the entire conversation thread. Used to generate the `conversation_id`.
+     - `messages`: Array of messages containing role and content information.
+       - `role`: Role of the message sender (`user` or `assistant`).
+       - `content`: Message content.
+       - `chat_time`: (Optional) Message timestamp.
 
 2. `search_memory`
-   - Searches for memories in a conversation
+   - Searches for memories in a conversation.
    - Parameters:
-     - `query`: Search query to find relevant content in conversation history
-     - `conversation_id`: Conversation ID to define the search scope
-     - `memory_limit_number`: Maximum number of results to return, defaults to 6
+     - `query`: Search query to find relevant content in conversation history.
+     - `conversation_first_message`: The first message sent by the user in the entire conversation thread. Used to generate the `conversation_id`.
+     - `memory_limit_number`: Maximum number of results to return (default: 6).
 
-3. `get_message`
-   - Retrieves messages from a conversation
+3. `delete_memory`
+   - Delete specific memories by their IDs.
    - Parameters:
-     - `conversation_id`: Conversation ID to identify which conversation's messages to retrieve
+     - `memory_ids`: List of memory IDs to delete.
+
+4. `add_feedback`
+   - Submit user feedback to the MemOS system.
+   - Parameters:
+     - `conversation_first_message`: The first message sent by the user in the entire conversation thread. Used to generate the `conversation_id`.
+     - `feedback_content`: The specific content of the feedback.
+     - `agent_id`: (Optional) Agent ID associated with the feedback.
+     - `app_id`: (Optional) App ID associated with the feedback.
+     - `feedback_time`: (Optional) Feedback time string (default: current UTC time).
+     - `allow_public`: (Optional) Whether to allow public access (default: false).
+     - `allow_knowledgebase_ids`: (Optional) List of knowledge base IDs allowed to be written to.
+
+
 
 All tools use the same configuration and require the `MEMOS_API_KEY` environment variable.
 

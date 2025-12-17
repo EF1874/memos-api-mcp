@@ -3,6 +3,8 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { z } from "zod"
 import { Md5 } from "ts-md5"
 import dayjs from "dayjs"
+import * as https from "node:https"
+import { URL } from "node:url"
 
 /**
  * 将字符串转换为MD5加密后的32位小写密文
@@ -19,8 +21,9 @@ function generateChatTime(): string {
 
 const MEMOS_BASE_URL = process.env.MEMOS_BASE_URL || "https://memos.memtensor.cn/api/openmem/v1";
 const MEMOS_USER_ID = process.env.MEMOS_USER_ID ?? "<unset>";
-const MEMOS_CHANNEL = process.env.MEMOS_CHANNEL?.toUpperCase() ?? "MODELSCOPE_REMOTE";
-const candidateChannelId: string[] = ["MODELSCOPE", "MCPSO", "MCPMARKETCN", "MCPMARKETCOM", "MEMOS", "GITHUB", "GLAMA", "PULSEMCP", "MCPSERVERS", "LOBEHUB", "MODELSCOPE_REMOTE"];
+const MEMOS_CHANNEL_ID = process.env.MEMOS_CHANNEL?.toUpperCase() ?? "MEMOS";
+const USER_LITERAL = JSON.stringify(MEMOS_USER_ID);
+const candidateChannelId: string[] = ["MODELSCOPE", "MCPSO", "MCPMARKETCN", "MCPMARKETCOM", "MEMOS"];
 
 const server = new McpServer(
   {
@@ -111,20 +114,66 @@ add_message({
   }
 )
 
-async function queryMemos(path: string, body: Record<string, any>, apiKey: string, source: string) {
-  const res = await fetch(`${MEMOS_BASE_URL}${path}`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': `Token ${apiKey}`
-    },
-    body: JSON.stringify({ ...body, source: source })
-  });
-  if (!res.ok) {
-    const txt = await res.text().catch(() => '');
-    throw new Error(`HTTP ${res.status} ${res.statusText}: ${txt}`);
+async function queryMemos(path: string, body: Record<string, any>, apiKey: string) {
+  const payload = JSON.stringify({ ...body, source: "MCP" });
+  const url = `${MEMOS_BASE_URL}${path}`;
+
+  const gf = (globalThis as any).fetch;
+  let f: any = gf;
+
+  if (f) {
+    const res = await f(url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Token ${apiKey}`
+      },
+      body: payload
+    });
+    if (!res.ok) {
+      const txt = await res.text().catch(() => "");
+      throw new Error(`HTTP ${res.status} ${res.statusText}: ${txt}`);
+    }
+    return res.json();
   }
-  return res.json();
+
+  return new Promise((resolve, reject) => {
+    try {
+      const u = new URL(url);
+      const options: https.RequestOptions = {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Token ${apiKey}`,
+          "Content-Length": Buffer.byteLength(payload)
+        }
+      };
+      const req = https.request(u, options, (res) => {
+        const chunks: Buffer[] = [];
+        res.on("data", (chunk) => {
+          chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+        });
+        res.on("end", () => {
+          const txt = Buffer.concat(chunks).toString("utf8");
+          const sc = res.statusCode || 0;
+          if (sc >= 200 && sc < 300) {
+            try {
+              resolve(JSON.parse(txt));
+            } catch {
+              resolve(txt);
+            }
+          } else {
+            reject(new Error(`HTTP ${sc} ${res.statusMessage || ""}: ${txt}`));
+          }
+        });
+      });
+      req.on("error", reject);
+      req.write(payload);
+      req.end();
+    } catch (e) {
+      reject(e);
+    }
+  });
 }
 
 server.tool(
@@ -161,12 +210,13 @@ server.tool(
         throw new Error("MEMOS_USER_ID is not set, please set it in the environment variables or mcp.json file");
       }
 
-      if (!candidateChannelId.includes(MEMOS_CHANNEL)) {
-        throw new Error("Unknown channel: " + MEMOS_CHANNEL + ", candidates: " + candidateChannelId.join(", "));
+      if (!candidateChannelId.includes(MEMOS_CHANNEL_ID)) {
+        throw new Error("Unknown channel: " + MEMOS_CHANNEL_ID);
       }
 
       // If no conversation_id provided, fall back to environment variable
       const actualConversationId = stringToMd5(process.env.MEMOS_USER_ID + '\n' + conversation_first_message) || process.env.MEMOS_CONVERSATION_ID;
+      const actualUserId = MEMOS_CHANNEL_ID === "MEMOS" ? process.env.MEMOS_USER_ID : process.env.MEMOS_USER_ID + "-" + MEMOS_CHANNEL_ID;
 
       const newMessages = messages.map(message => ({
         role: message.role,
@@ -177,12 +227,11 @@ server.tool(
       const data = await queryMemos(
         "/add/message",
         { 
-          user_id: process.env.MEMOS_USER_ID, 
+          user_id: actualUserId, 
           conversation_id: actualConversationId, 
           messages: newMessages 
         },
-        process.env.MEMOS_API_KEY,
-        MEMOS_CHANNEL
+        process.env.MEMOS_API_KEY
       );
 
       return { content: [{ type: "text", text: JSON.stringify(data) }], structuredContent: data };
@@ -203,9 +252,10 @@ server.tool(
   "search_memory",
   `
   Trigger: MUST be auto-invoked by the client before generating every answer (including greetings like "hello"). Do not wait for the user to request memory/MCP/tool usage.
-  Purpose: MemOS retrieval API. Retrieve candidate memories reflecting the user's action, context, intention and preferences, to improve continuity and personalization of your answers.
+  Purpose: MemOS retrieval API. Retrieve candidate memories prior to answering to improve continuity and personalization.
   Usage requirements:
     - Always call this tool before answering (client-enforced).
+    - The model must automatically judge relevance and use only relevant memories in reasoning; ignore irrelevant/noisy items.
   Parameters:
     - \`query\`: User's current question/message
     - \`conversation_first_message\`: First user message in the thread (used to generate conversation_id)
@@ -214,7 +264,6 @@ server.tool(
     - Run before answering. Results may include noise; filter and use only what is relevant.
     - \`query\` should be a concise summary of the current user message.
     - Prefer recent and important memories. If none are relevant, proceed to answer normally.
-    - The model must automatically judge relevance and use only relevant memories in reasoning; ignore irrelevant/noisy items, and some out-dated memories when answering those questions that require recent information.
   `,
   {
     query: z.string().describe("Search query to find relevant content in conversation history"),
@@ -234,22 +283,22 @@ server.tool(
         throw new Error("MEMOS_USER_ID is not set, please set it in the environment variables or mcp.json file");
       }
 
-      if (!candidateChannelId.includes(MEMOS_CHANNEL)) {
-        throw new Error("Unknown channel: " + MEMOS_CHANNEL);
+      if (!candidateChannelId.includes(MEMOS_CHANNEL_ID)) {
+        throw new Error("Unknown channel: " + MEMOS_CHANNEL_ID);
       }
 
       const actualConversationId = stringToMd5(process.env.MEMOS_USER_ID + '\n' + conversation_first_message) || process.env.MEMOS_CONVERSATION_ID;
-      
+      const actualUserId = MEMOS_CHANNEL_ID === "MEMOS" ? process.env.MEMOS_USER_ID : process.env.MEMOS_USER_ID + "-" + MEMOS_CHANNEL_ID;
+
       const data = await queryMemos(
         "/search/memory",
         {
           query,
-          user_id: process.env.MEMOS_USER_ID,
+          user_id: actualUserId,
           conversation_id: actualConversationId,
           memory_limit_number: memory_limit_number || 6
         },
-        process.env.MEMOS_API_KEY,
-        MEMOS_CHANNEL
+        process.env.MEMOS_API_KEY
       );
 
       return { content: [{ type: "text", text: JSON.stringify(data) }], structuredContent: data };
@@ -262,22 +311,20 @@ server.tool(
   }
 )
 
+
 server.tool(
-  "get_message",
+  "delete_memory",
   `
-  Trigger: When the user asks for the full conversation history or requests a summary of the conversation.
-  Purpose: Retrieve the complete message history of a specific conversation thread for analysis, review, or summarization.
+  Trigger: When the user wants to delete specific memories.
+  Purpose: Delete specific memories by their IDs.
   Parameters:
-    - \`conversation_first_message\`: First user message in the thread (used to generate conversation_id).
+    - \`memory_ids\`: List of memory IDs to delete.
   `,
   {
-    conversation_first_message: z.string().describe(
-      `First user message in the thread (used to generate conversation_id).`
-    )
+    memory_ids: z.array(z.string()).describe("List of memory IDs to delete")
   },
-  async ({ conversation_first_message }: { conversation_first_message: string }) => {
+  async ({ memory_ids }: { memory_ids: string[] }) => {
     try {
-
       if (!process.env.MEMOS_API_KEY) {
         throw new Error("MEMOS_API_KEY is not set, please set it in the environment variables or mcp.json file");
       }
@@ -286,21 +333,88 @@ server.tool(
         throw new Error("MEMOS_USER_ID is not set, please set it in the environment variables or mcp.json file");
       }
 
-      if (!candidateChannelId.includes(MEMOS_CHANNEL)) {
-        throw new Error("Unknown channel: " + MEMOS_CHANNEL);
+      if (!candidateChannelId.includes(MEMOS_CHANNEL_ID)) {
+        throw new Error("Unknown channel: " + MEMOS_CHANNEL_ID);
+      }
+
+      const actualUserId = MEMOS_CHANNEL_ID === "MEMOS" ? process.env.MEMOS_USER_ID : process.env.MEMOS_USER_ID + "-" + MEMOS_CHANNEL_ID;
+
+      const data = await queryMemos(
+        "/delete/memory",
+        {
+          user_ids: [actualUserId],
+          memory_ids
+        },
+        process.env.MEMOS_API_KEY
+      );
+
+      return { content: [{ type: "text", text: JSON.stringify(data) }], structuredContent: data };
+    } catch (e) {
+      return {
+        content: [{ type: "text", text: `Error: ${e instanceof Error ? e.message : "Unknown error"}` }],
+        isError: true
+      };
+    }
+  }
+)
+
+
+
+server.tool(
+  "add_feedback",
+  `
+  Trigger: Auto-invoked when a user provides feedback.
+  Purpose: Submit user feedback to the MemOS system.
+  Parameters:
+    - \`conversation_first_message\`: The first message sent by the user in the entire conversation thread. Used to generate the conversation_id.
+    - \`feedback_content\`: Content of the feedback (required)
+    - \`agent_id\`: Agent ID (optional)
+    - \`app_id\`: App ID (optional)
+    - \`feedback_time\`: Feedback time string (optional, default current UTC)
+    - \`allow_public\`: Whether to allow public access (optional, default false)
+    - \`allow_knowledgebase_ids\`: List of allowed knowledge base IDs (optional)
+  `,
+  {
+    conversation_first_message: z.string().describe(
+      `The first message sent by the user in the entire conversation thread. Used to generate the conversation_id.`
+    ),
+    feedback_content: z.string().describe("The specific content of the feedback"),
+    agent_id: z.string().optional().describe("Agent ID associated with the feedback"),
+    app_id: z.string().optional().describe("App ID associated with the feedback"),
+    feedback_time: z.string().optional().describe("Feedback time string. Default is current UTC time"),
+    allow_public: z.boolean().optional().describe("Whether to allow public access. Default is false"),
+    allow_knowledgebase_ids: z.array(z.string()).optional().describe("List of knowledge base IDs allowed to be written to")
+  },
+  async ({ conversation_first_message, feedback_content, agent_id, app_id, feedback_time, allow_public, allow_knowledgebase_ids }) => {
+    try {
+      if (!process.env.MEMOS_API_KEY) {
+        throw new Error("MEMOS_API_KEY is not set, please set it in the environment variables or mcp.json file");
+      }
+
+      if (!process.env.MEMOS_USER_ID) {
+        throw new Error("MEMOS_USER_ID is not set, please set it in the environment variables or mcp.json file");
+      }
+
+      if (!candidateChannelId.includes(MEMOS_CHANNEL_ID)) {
+        throw new Error("Unknown channel: " + MEMOS_CHANNEL_ID);
       }
 
       const actualConversationId = stringToMd5(process.env.MEMOS_USER_ID + '\n' + conversation_first_message) || process.env.MEMOS_CONVERSATION_ID;
-      
+      const actualUserId = MEMOS_CHANNEL_ID === "MEMOS" ? process.env.MEMOS_USER_ID : process.env.MEMOS_USER_ID + "-" + MEMOS_CHANNEL_ID;
 
       const data = await queryMemos(
-        "/get/message",
-        { 
-          user_id: process.env.MEMOS_USER_ID, 
-          conversation_id: actualConversationId 
+        "/add/feedback",
+        {
+          user_id: actualUserId,
+          conversation_id: actualConversationId,
+          feedback_content,
+          agent_id,
+          app_id,
+          feedback_time,
+          allow_public,
+          allow_knowledgebase_ids
         },
-        process.env.MEMOS_API_KEY,
-        MEMOS_CHANNEL
+        process.env.MEMOS_API_KEY
       );
 
       return { content: [{ type: "text", text: JSON.stringify(data) }], structuredContent: data };
