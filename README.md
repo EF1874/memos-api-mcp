@@ -36,7 +36,7 @@ This package provides the following MCP tools:
 1. `add_message`
    - Adds a new message to a conversation
    - Parameters:
-     - `conversation_first_message`: The first message sent by the user in the entire conversation thread. Used to generate the `conversation_id`.
+     - `conversation_id`: Unique identifier of the conversation associated with the feedback.
      - `messages`: Array of messages containing role and content information.
        - `role`: Role of the message sender (`user` or `assistant`).
        - `content`: Message content.
@@ -46,18 +46,20 @@ This package provides the following MCP tools:
    - Searches for memories in a conversation.
    - Parameters:
      - `query`: Search query to find relevant content in conversation history.
-     - `conversation_first_message`: The first message sent by the user in the entire conversation thread. Used to generate the `conversation_id`.
+     - `conversation_id`: Conversation ID to define the search scope.
      - `memory_limit_number`: Maximum number of results to return (default: 6).
 
 3. `delete_memory`
    - Delete specific memories by their IDs.
    - Parameters:
+     - `user_ids`: List of user IDs whose memories will be deleted.
      - `memory_ids`: List of memory IDs to delete.
 
 4. `add_feedback`
    - Submit user feedback to the MemOS system.
    - Parameters:
-     - `conversation_first_message`: The first message sent by the user in the entire conversation thread. Used to generate the `conversation_id`.
+     - `user_id`: The user identifier associated with the feedback.
+     - `conversation_id`: Unique identifier of the conversation associated with the feedback.
      - `feedback_content`: The specific content of the feedback.
      - `agent_id`: (Optional) Agent ID associated with the feedback.
      - `app_id`: (Optional) App ID associated with the feedback.
