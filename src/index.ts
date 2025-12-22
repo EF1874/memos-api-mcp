@@ -93,20 +93,21 @@ Use retrieved memories **only if relevant**. If none are relevant, answer normal
 ### 3) 💾 Save Conversation (Auto-invoked AFTER answering)
 - **Trigger**: Must be auto-called after producing the final answer on **every turn**.
 - **Tool**: \`add_message\`
-- **Parameters**:
-  - \`conversation_first_message\`: Same as used in \`search_memory\`
-  - \`messages\`: Array with both:
-    1) \`{ role: "user", content: "<user question>" }\`
-    2) \`{ role: "assistant", content: "<your complete response>" }\`
+- **Purpose**: PRIMARY tool for recording **NEW facts/information** and persisting conversation history for future personalization.
+- **Rule**: If the user provides new information or wants to "remember" something new, use this. Do NOT use \`add_feedback\` for new additions.
 
-**Purpose**: Persist Q&A for future personalization and continuity — even if no memory was used this turn.
+### 4) 🔄 Update/Correct Memory (User-triggered ONLY)
+- **Tool**: \`add_feedback\`
+- **Trigger**: ONLY when the user explicitly requests to **modify, update, or correct** an existing memory, or provides specific feedback on memory accuracy.
+- **Rule**: Never use this for adding new information.
 
 ## ✅ Non-Negotiable Client Responsibilities
 1. **Auto-invoke** \`search_memory\` before **every** answer and \`add_message\` after **every** answer.
 2. **No user opt-in**: Do not wait for the user to explicitly mention memory/tools/MCP.
 3. **Stable \`conversation_first_message\`** across the thread.
 4. **Store both user and assistant** messages every turn.
-5. **Sequence** must be strictly: Search → Answer → Save.
+5. **Sequence**: Search → Answer → Save.
+6. **Correct Tool Choice**: Use \`add_message\` for ALL new content (adding facts). Use \`add_feedback\` ONLY for updates, corrections, or refinements of existing memories.
 
 ## Example (pseudo-flow)
 \`\`\`javascript
@@ -202,12 +203,14 @@ async function queryMemos(path: string, body: Record<string, any>, apiKey: strin
 server.tool(
   "add_message",
   `
-  Trigger: MUST be auto-invoked by the client after completing every answer (final step of each turn).
-  Purpose: Persist this turn's user question and assistant answer for memory extraction, personalization, and continuity. This MUST run even if no retrieved memories were used.
+  Trigger: MUST be auto-invoked by the client after completing every answer (final step of each turn). This preserves conversation continuity.
+  Purpose: 1. Save dialogue history. 2. Record ALL NEW (non-existent) facts and information.
+  Standard Practice: If the user says "remember [X]" or provide any new info, use this tool.
+  Warning: DO NOT use this tool to "update" or "correct" existing memories. For any modification to existing information, you MUST use \`add_feedback\`.
   Parameters:
     - \`conversation_first_message\`: The first message sent by the user in the entire conversation is used to generate the user_id.
     - \`messages\`: Array containing BOTH:
-      1. \`{ role: "user", content: "user's question" }\`
+      1. \`{ role: "user", content: "user's question or new info" }\`
       2. \`{ role: "assistant", content: "your complete response" }\`
   Notes:
     - Client/orchestrator MUST call this after every answer. Skipping it degrades personalization and continuity.
@@ -390,11 +393,17 @@ server.tool(
 server.tool(
   "add_feedback",
   `
-  Trigger: Auto-invoked when a user provides feedback OR whenever the user wants to MODIFY or UPDATE an existing memory.
-  Purpose: Submit user feedback to the MemOS system, or strictly for updating/modifying existing memories.
+  Trigger: User provides corrections, updates to information, or specific feedback on the interaction.
+  Purpose: Process user feedback to update memories or refine future interactions.
+  Rule: Use this for corrections/feedback. For NEW facts/information, continue using \`add_message\`.
+  Usage Rules:
+    - \`feedback_content\`: Provide ONLY the clear, concise user intent or correction (e.g., "Change favorite color to Blue", "The previous answer was incorrect", "I actually live in New York").
+    - **CRITICAL**: Do NOT over-process the content into a narrative. Do NOT write "User's current preference is updated to...". Just state the desired change or feedback directly.
+    - **CRITICAL**: DO NOT include memory IDs, UUIDs, or specific record indices in the content.
+    - **CRITICAL**: One-shot call only. Do NOT perform verification searches or retry loops after calling this.
   Parameters:
-    - \`conversation_first_message\`: The first message sent by the user in the entire conversation thread. Used to generate the conversation_id.
-    - \`feedback_content\`: Content of the feedback or the update instruction (required)
+    - \`conversation_first_message\`: Used to generate the conversation_id.
+    - \`feedback_content\`: The natural language update or feedback (no IDs or technical metadata).
     - \`agent_id\`: Agent ID (optional)
     - \`app_id\`: App ID (optional)
     - \`feedback_time\`: Feedback time string (optional, default current UTC)
@@ -405,7 +414,7 @@ server.tool(
     conversation_first_message: z.string().describe(
       `The first message sent by the user in the entire conversation thread. Used to generate the conversation_id.`
     ),
-    feedback_content: z.string().describe("The specific content of the feedback"),
+    feedback_content: z.string().describe("The clear, concise user intent, correction, or feedback. Do NOT include verbose explanations or future instructions."),
     agent_id: z.string().optional().describe("Agent ID associated with the feedback"),
     app_id: z.string().optional().describe("App ID associated with the feedback"),
     feedback_time: z.string().optional().describe("Feedback time string. Default is current UTC time"),
