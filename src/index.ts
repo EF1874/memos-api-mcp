@@ -96,9 +96,9 @@ Use retrieved memories **only if relevant**. If none are relevant, answer normal
 - **Purpose**: PRIMARY tool for recording **NEW facts/information** and persisting conversation history for future personalization.
 - **Rule**: If the user provides new information or wants to "remember" something new, use this. Do NOT use \`add_feedback\` for new additions.
 
-### 4) 🔄 Update/Correct Memory (User-triggered ONLY)
+### 4) 🔄 Update/Correct/Delete Memory (User-triggered ONLY)
 - **Tool**: \`add_feedback\`
-- **Trigger**: ONLY when the user explicitly requests to **modify, update, or correct** an existing memory, or provides specific feedback on memory accuracy.
+- **Trigger**: User requests to **modify, update, correct, or delete (without ID)** a memory.
 - **Rule**: Never use this for adding new information.
 
 ## ✅ Non-Negotiable Client Responsibilities
@@ -203,18 +203,22 @@ async function queryMemos(path: string, body: Record<string, any>, apiKey: strin
 server.tool(
   "add_message",
   `
-  Trigger: MUST be auto-invoked by the client after completing every answer (final step of each turn). This preserves conversation continuity.
-  Purpose: 1. Save dialogue history. 2. Record ALL NEW (non-existent) facts and information.
-  Standard Practice: If the user says "remember [X]" or provide any new info, use this tool.
-  Warning: DO NOT use this tool to "update" or "correct" existing memories. For any modification to existing information, you MUST use \`add_feedback\`.
+  Trigger: 
+    1. AUTO-INVOKED: After every answer to save dialogue history.
+    2. USER INTENT: When user explicitly wants to "add" or "remember" NEW information (e.g., "Add a memory...", "Remember that...", "New memory...").
+  Purpose: Save dialogue history and record NEW memories.
+  STRICT RULES:
+    - ALWAYS use this tool for NEW memories.
+    - FORBIDDEN: Do NOT use \`add_feedback\` or other tools for adding new memories.
+    - FORBIDDEN: Do NOT use this tool to modify/update existing memories.
+    - CRITICAL: NEVER use this tool as part of a modification workaround (e.g. "delete old + add new"). If a modification fails, just report the failure.
   Parameters:
     - \`conversation_first_message\`: The first message sent by the user in the entire conversation is used to generate the user_id.
     - \`messages\`: Array containing BOTH:
       1. \`{ role: "user", content: "user's question or new info" }\`
       2. \`{ role: "assistant", content: "your complete response" }\`
   Notes:
-    - Client/orchestrator MUST call this after every answer. Skipping it degrades personalization and continuity.
-    - Store only the actual Q&A of this turn; do not store raw retrieval snippets.
+    - Client/orchestrator MUST call this after every answer.
   `,
   {
     conversation_first_message: z.string().describe(
@@ -277,19 +281,16 @@ server.tool(
 server.tool(
   "search_memory",
   `
-  Trigger: MUST be auto-invoked by the client before generating every answer (including greetings like "hello"). Do not wait for the user to request memory/MCP/tool usage.
-  Purpose: MemOS retrieval API. Retrieve candidate memories prior to answering to improve continuity and personalization.
-  Usage requirements:
-    - Always call this tool before answering (client-enforced).
-    - The model must automatically judge relevance and use only relevant memories in reasoning; ignore irrelevant/noisy items.
+  Trigger: AUTO-INVOKED before answering or when user explicitly asks to query memories.
+  Purpose: Retrieve memories.
+  STRICT RULES:
+    - FIRE AND FORGET: If you just called \`add_feedback\`, DO NOT call this tool to verify the change. Assume it worked.
+    - If user asks to query after an operation (add/delete/modify) and results don't match expectation (due to async), DO NOT continue attempting to fix/update via tools.
+    - Just report what is found.
   Parameters:
     - \`query\`: User's current question/message
     - \`conversation_first_message\`: First user message in the thread (used to generate conversation_id)
     - \`memory_limit_number\`: Maximum number of results to return, defaults to 6
-  Notes:
-    - Run before answering. Results may include noise; filter and use only what is relevant.
-    - \`query\` should be a concise summary of the current user message.
-    - Prefer recent and important memories. If none are relevant, proceed to answer normally.
   `,
   {
     query: z.string().describe("Search query to find relevant content in conversation history"),
@@ -341,12 +342,14 @@ server.tool(
 server.tool(
   "delete_memory",
   `
-  Trigger: ONLY when the user explicitly requests to delete specific memories.
-  Purpose: Delete specific memories by their IDs. 
-  Usage Guidelines:
-    - This tool is primarily for developer use or explicit user deletion requests.
-    - DO NOT use this tool to "update" a memory by deleting and then re-adding it. To modify or update a memory, use \`add_feedback\` instead.
-    - Note: Memory search is paginated. Be cautious when deleting based on search results to ensure you are targeting the correct memory and handling pagination consistency.
+  Trigger: User provides specific ID(s) to delete.
+  Purpose: Delete memories by ID.
+  STRICT RULES:
+    1. BATCHING: If multiple IDs are provided, call this tool ONCE with all IDs.
+    2. FORBIDDEN: Do NOT call multiple times. Do NOT enter search-delete loops.
+    3. FORBIDDEN: Do not use this tool if no ID is provided (use add_feedback instead).
+    4. CRITICAL: NEVER use this tool to "simulate" a modification (delete old + add new). This is strictly forbidden.
+    5. CRITICAL: ONLY use if user explicitly asks to delete AND provides IDs.
   Parameters:
     - \`memory_ids\`: List of memory IDs to delete.
   `,
@@ -393,14 +396,19 @@ server.tool(
 server.tool(
   "add_feedback",
   `
-  Trigger: User provides corrections, updates to information, or specific feedback on the interaction.
-  Purpose: Process user feedback to update memories or refine future interactions.
-  Rule: Use this for corrections/feedback. For NEW facts/information, continue using \`add_message\`.
-  Usage Rules:
-    - \`feedback_content\`: Provide ONLY the clear, concise user intent or correction (e.g., "Change favorite color to Blue", "The previous answer was incorrect", "I actually live in New York").
-    - **CRITICAL**: Do NOT over-process the content into a narrative. Do NOT write "User's current preference is updated to...". Just state the desired change or feedback directly.
-    - **CRITICAL**: DO NOT include memory IDs, UUIDs, or specific record indices in the content.
-    - **CRITICAL**: One-shot call only. Do NOT perform verification searches or retry loops after calling this.
+  Trigger: User wants to MODIFY, UPDATE, or DELETE (without providing IDs) specific memories.
+  Purpose: Modify/Delete existing memories based on natural language feedback.
+  STRICT RULES:
+    1. USAGE: Use this tool for modifying/updating memories OR deleting memories when NO ID is provided.
+    2. CONTENT: \`feedback_content\` MUST be ONLY the user's intent (e.g., "User wants to modify memory X", "Delete memory about Y"). 
+       - FORBIDDEN: Adding non-user-intent info or verbose narratives.
+       - FORBIDDEN: Looking up old memory values to construct a "Change X to Y" request. Just say "User wants Y".
+    3. RETRY POLICY: FIRE AND FORGET. Call this tool ONCE.
+       - FORBIDDEN: Checking if it worked (searching again).
+       - FORBIDDEN: Retrying if it "failed".
+       - FORBIDDEN: Sleeping and searching.
+       - CRITICAL: If modification seemingly fails, DO NOT attempt to "fix" it by calling \`delete_memory\` and \`add_message\`. Just stop.
+    4. DELETION: If user wants to delete but gives no ID, use this tool.
   Parameters:
     - \`conversation_first_message\`: Used to generate the conversation_id.
     - \`feedback_content\`: The natural language update or feedback (no IDs or technical metadata).
