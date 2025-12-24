@@ -57,6 +57,7 @@ This package provides the following MCP tools:
 
 4. `add_feedback`
    - Submit user feedback to the MemOS system.
+   - Note: Feedback is applied asynchronously — `add_feedback` returns immediately (often with a `task_id`), and the effect may take a short time to appear.
    - Parameters:
      - `user_id`: The user identifier associated with the feedback.
      - `conversation_id`: Unique identifier of the conversation associated with the feedback.
