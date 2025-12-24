@@ -1,6 +1,6 @@
 {
   "name": "@memtensor/memos-api-mcp",
-  "version": "1.0.16",
+  "version": "1.0.17-beta.0",
   "type": "module",
   "bin": {
     "memos-api-mcp": "build/index.js"
